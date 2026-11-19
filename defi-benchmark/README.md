@@ -35,6 +35,8 @@ export CHAIN_DEPLOY_KEY_FILE=/absolute/path/to/funded-benchmark-signer.hex
 
 The signer file contains one 32-byte hex secp256k1 private key. Use a dedicated host-only signer funded for phlo on the intended chain. Both endpoints use the local F1R3node HTTP API. The reader must be a ready read-only observer, and the writer must accept signed uint256-price deploys.
 
+To use the encrypted Omega Chain Wallet, install the sibling `omega-flagship/omega-chain-wallet` package in the Hive environment and import the funded signer with its operator CLI. Set `CHAIN_DEPLOY_PUBLIC_KEY` to its full public hex key and unset `CHAIN_DEPLOY_KEY_FILE` before running the installer or Hive. An existing leaderboard requires its original signer.
+
 The installer prints its deploy ID before submission and the registry URI after finalization. Use `deploy.py --resume DEPLOY_ID` to recover an installation. Retain the URI and signer for subsequent Hive restarts. Running a fresh installation creates another independent leaderboard.
 
 Set the following in the **Hive server's** environment, along with the chain settings above, then start the server. Preserve any existing plugin directories.
