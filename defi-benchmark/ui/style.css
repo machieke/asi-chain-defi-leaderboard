@@ -276,6 +276,11 @@ td.identity {
   color: #983e32;
 }
 
+#market-summary {
+  padding: 0 1.5rem 1rem;
+  color: var(--muted);
+}
+
 #notice {
   padding: 1.5rem;
   color: var(--muted);

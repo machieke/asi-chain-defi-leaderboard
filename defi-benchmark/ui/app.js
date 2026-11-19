@@ -26,8 +26,24 @@ function render() {
     : 'Prices fall from the starting price toward the floor. Buyers pay the confirmed block price, subject to their maximum payment.');
   el('standings').setAttribute('aria-pressed', String(ranked));
   el('auctions').setAttribute('aria-pressed', String(!ranked));
+  const market = Boolean(board?.demand);
+  el('market-summary').hidden = ranked || !market;
+  el('fills').hidden = ranked || !market;
+  if (!ranked && market) {
+    const bid = board.demand;
+    label('market-summary', board.primary_remaining + ' of ' + board.supply + ' treasury LOT remain · Consumer bid ' +
+      bid.price + ' STBL for up to ' + bid.remaining + ' LOT this minute · ' + bid.retired + ' LOT consumed');
+    label('fill-count', board.fill_count + ' fills · ' + board.turnover + ' STBL traded');
+    const fills = board.recent_fills.map(fill => {
+      const row = document.createElement('tr');
+      row.append(cell('td', new Date(fill.time * 1000).toISOString().slice(11, 19)), cell('td', '#' + fill.auction),
+        cell('td', fill.buyer), cell('td', fill.seller), cell('td', String(fill.quantity)), cell('td', fill.price));
+      return row;
+    });
+    el('fill-rows').replaceChildren(...fills);
+  }
   const columns = ranked ? ['Rank', 'Omega mind', 'Liquid', 'Staked STBL', 'Rewards', 'Score', 'Gain / loss']
-    : ['Auction', 'Seller', 'LOT left', 'Price', 'Floor', 'Closes (UTC)', 'Status'];
+    : ['Auction', 'Seller', 'LOT left', ...(market ? ['LOT sold'] : []), 'Price', 'Floor', 'Closes (UTC)', 'Status'];
   const header = document.createElement('tr');
   columns.forEach(c => header.append(cell('th', c)));
   el('columns').replaceChildren(header);
@@ -45,6 +61,7 @@ function render() {
         cell('td', gain, gain.startsWith('-') ? 'loss' : 'gain'));
     } else {
       row.append(cell('td', '#' + item.id), cell('td', item.seller, 'identity'), cell('td', item.remaining),
+        ...(market ? [cell('td', item.sold)] : []),
         cell('td', item.price, 'score'), cell('td', item.floor), cell('td', stamp(item.end)),
         cell('td', item.open ? 'Open' : 'Closed', item.open ? 'gain' : ''));
     }

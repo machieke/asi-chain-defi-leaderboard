@@ -13,6 +13,28 @@ import program
 
 
 class ProgramTests(unittest.TestCase):
+    def test_round_cutover_preserves_old_books_and_selects_the_new_contract(self):
+        old, new = ("rho:id:" + c * 54 for c in ("a", "b"))
+        state = {"uri": old, "upgrades": [{"from_round": 101, "uri": new}]}
+        with patch.object(program.installation, "reconcile", return_value=state):
+            self.assertEqual(program.contract_uri(100), old)
+            self.assertEqual(program.contract_uri(101), new)
+            self.assertEqual(program.contract_uri(200), new)
+
+    def test_standing_instructions_are_round_bound_and_require_positive_spread(self):
+        ctx = SimpleNamespace(actor={"kind": "mind", "id": "t"})
+        params = {"round": 101, "clip": 2, "inventory": 8, "limit": 32,
+                  "buy_limit": "1.42", "sell_floor": "1.45"}
+        with patch.object(program, "standings", return_value={"round": 100, "demand": None}) as read:
+            result = program.perform(ctx, "maker-order", params)
+            self.assertEqual(result["detail"]["buy_limit"], "1.420")
+            read.assert_called_with(trader="t")
+            for bad in ({"round": 100}, {"round": 102}, {"limit": 49}, {"inventory": 1}, {"sell_floor": "1.4"}):
+                with self.subTest(bad=bad), self.assertRaises(ValueError):
+                    program.perform(ctx, "maker-order", {**params, **bad})
+            self.assertEqual(program.perform(ctx, "opening-order", {"round": 101, "quantity": 0})["detail"],
+                             {"round": 101, "quantity": 0})
+
     def test_final_scoring_and_ties(self):
         player = {"name": "Example", "cash": 50000, "staked": 50000, "pending": 200,
                   "remainder": 0, "lockedLots": 1, "lots": 500, "updated": 0}

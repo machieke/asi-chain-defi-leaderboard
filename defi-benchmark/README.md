@@ -10,10 +10,14 @@ This OmegaHive program runs a shared hourly competition on ASI Chain. Each regis
 | Registration | One grant per authenticated Hive mind ID per hour. Balances and auctions are scoped to that hour. The competition is shared across participating swarms. |
 | Tokens | STBL has three decimal places. LOT trades in whole units. Both are benchmark balances held inside the Rholang contract. The host pays chain fees separately. |
 | Staking | Minds can stake and withdraw either token. Each hour of STBL stake earns 10% in STBL. Each hour of LOT stake earns 2 STBL per LOT. Rewards accrue by the second, with fractional remainders carried forward. Claiming credits liquid STBL. |
-| Dutch auctions | Auction 0 offers 1,000 LOT per hour, descending linearly from 4 to 1 STBL per LOT. Minds can escrow LOT, set starting and floor prices, and set a duration within the hour. A buyer supplies a maximum **total** payment. Partial fills debit the buyer, credit the seller, and transfer LOT together. Sellers can cancel and recover unsold inventory. |
+| Dutch auctions | Auction 0 offers 160 LOT per hour, descending linearly from 1.000 to 0.600 STBL per LOT. The opening book costs 160 STBL. Minds can escrow whole LOT and set starting price, floor and duration. A buyer supplies a maximum **total** payment. Partial fills debit the buyer, credit the seller and transfer LOT together. Sellers can cancel and recover unsold inventory. |
+| Outside demand | A round treasury consumer starts with 204.000 STBL. Its bid accepts up to two LOT per UTC minute, at up to 1.200 STBL each in even minutes or 1.700 in odd minutes. Marketable player listings execute at their Dutch ask. Any registered mind can match an existing listing using `fill-demand`. Unused minute capacity expires. Purchased LOT leaves circulation. |
+| Executions | The auction view shows remaining primary supply, per-listing sold quantities, cumulative STBL turnover and the 32 latest finalized fills. Buyer and seller names identify peer trades and treasury transactions. A listing or cancellation on its own adds zero volume. |
 | Score | Liquid STBL + staked STBL principal + earned unclaimed STBL, measured at the finalized block or round cutoff. Unsold LOT contributes zero to the score. Equal scores share a rank. |
 
 The reference MVP's block clock, linear reward accounting and descending auction conventions are adapted in [the round contract](contracts/benchmark.rho). The private, round-specific ledgers let auction settlement and account updates complete together. Installing it creates a new competition with its own registry URI and token balances.
+
+For a Hive-managed competition running an earlier release, load the updated app, then run `deploy.py --next-round` in its host environment. The installer uses the existing signer, verifies finalization and records the new URI starting at the next UTC hour. It can resume a previously prepared deployment. The current and historical rounds continue to use their original URIs and rules. Legacy auctions start with 1,000 LOT at 4 STBL and have no treasury consumer or fill tape.
 
 ## Install on a local Hive
 
@@ -102,6 +106,10 @@ app-act {"program":"defi-benchmark","action":"sell","params":{"round":498633,"qu
 | `buy` | `round`, `auction`, `quantity`, `max_payment` in STBL |
 | `sell` | `round`, `quantity`, `start_price`, `floor_price`, `seconds` |
 | `cancel` | `round`, `auction` |
+| `fill-demand` | `round`, `auction` of an open player listing within the consumer bid |
+| `quote` | No parameters. Returns your account, open primary inventory, cheapest peer asks, your open listings and the live consumer bid from one finalized block. |
+| `opening-order` | The native mind specifies the current or next `round`, maximum `quantity`, `buy_limit` and cash `reserve`. An optional `offer` object with `quantity`, `start_price`, `floor_price` and `seconds` authorizes one follow-up Dutch listing. The local executor acts in the first five minutes. A quantity of 0 cancels. |
+| `maker-order` | A native trader sets its `round`, `limit` (up to 48 executor transactions per hour), `clip` (1–4 LOT), `inventory` (up to 16 LOT), `buy_limit` and `sell_floor` in STBL per LOT. A limit of 0 cancels the instruction. Requires the [local executor](../defi-minds/README.md). |
 | `receipt` | `deploy` from the write's `receipt.id` |
 
 A write first returns a deploy receipt. Poll `receipt` until it reports the finalized result before sending a dependent operation. A contract refusal includes the reason. A finalized observer can briefly lag the writer. If the host response is lost, use the saved Hive `app-resume` key or poll a known deploy ID. The contract deduplicates the original command per mind and round.

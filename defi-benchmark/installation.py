@@ -13,7 +13,7 @@ from omega_chain_deploy import Deployer, decode
 
 CONTRACT = Path(__file__).parent / "contracts" / "benchmark.rho"
 # Hive's program digest covers Python and the UI lock. Bind the deployed Rholang to that release too.
-CONTRACT_SHA256 = "d6a273367a3f64abf0911c43d4268217c1f8bf572ac8694c25c5b52ad9388fb9"
+CONTRACT_SHA256 = "a463e96432f793ab4530efb74b7e6ca5a850ee067b3df3ab27ad8742f18059ce"
 PUBLIC = re.compile(r"04[0-9a-f]{128}")
 URI = re.compile(r"rho:id:[a-z0-9]{54}")
 PHLO_LIMIT = 5_000_000
@@ -24,8 +24,8 @@ def directory():
 
 
 @contextmanager
-def exclusive():
-    root = directory()
+def exclusive(root=None):
+    root = root or directory()
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
     fd = os.open(root, os.O_DIRECTORY | os.O_RDONLY)
     try:
@@ -39,9 +39,9 @@ def identity():
     return {"network": os.getenv("CHAIN_NETWORK_ID", "testnet"), "shard": os.getenv("CHAIN_SHARD_ID", "root")}
 
 
-def read():
+def read(root=None):
     try:
-        state = json.loads((directory() / "installation.json").read_bytes())
+        state = json.loads(((root or directory()) / "installation.json").read_bytes())
     except FileNotFoundError:
         return {}
     if (not isinstance(state, dict) or state.get("chain") != identity() or
@@ -50,8 +50,8 @@ def read():
     return state
 
 
-def save(state):
-    root = directory()
+def save(state, root=None):
+    root = root or directory()
     with tempfile.NamedTemporaryFile(dir=root, prefix=".installation-", delete=False) as f:
         try:
             f.write(json.dumps(state, separators=(",", ":")).encode())
@@ -132,8 +132,8 @@ def account(public):
     raise ValueError("The finalized observer could not read this signer's native balance.")
 
 
-def reconcile():
-    state = read()
+def reconcile(root=None):
+    state = read(root)
     if configured_uri(state) or state.get("phase") not in ("pending", "prepared"):
         return state
     writer = Deployer()
@@ -149,12 +149,12 @@ def reconcile():
     else:
         # A finalized but unreadable result might already have created a contract.
         raise ValueError(f"Verify installation receipt {state['id']}. The node did not return a registry URI.")
-    with exclusive():
-        latest = read()
+    with exclusive(root):
+        latest = read(root)
         if latest.get("id") == state["id"] and latest["phase"] in ("pending", "prepared"):
             latest.update(update)
             latest.pop("signed", None)
-            save(latest)
+            save(latest, root)
         return latest
 
 
@@ -193,9 +193,9 @@ def create_signer():
     return {"status": "done", "message": "The host signing wallet is ready."}
 
 
-def install(params, *, replay=False):
-    with exclusive():
-        state = read()
+def install(params, *, replay=False, root=None):
+    with exclusive(root):
+        state = read(root)
         if configured_uri(state):
             return {"status": "done", "message": "This benchmark is already configured."}
         phase = state.get("phase")
@@ -225,21 +225,21 @@ def install(params, *, replay=False):
             if int(funds["balance"]) < fee:
                 raise ValueError(f"Fund {funds['address']} with at least {fee} native base units in total, then refresh.")
             state = {"phase": "prepared", "chain": identity(), "id": signed["signature"], "signed": signed,
-                     "signer": public, "wallet": selected != "host"}
-            save(state)
+                     "signer": public, "wallet": selected != "host", "source": CONTRACT_SHA256}
+            save(state, root)
         try:
             writer.submit(signed)
         except (ChainError, OSError) as exc:
             if not replay and isinstance(exc, ChainError) and exc.http_status in (400, 403, 422):
                 state.update(phase="failed", message=str(exc))
                 state.pop("signed", None)
-                save(state)
+                save(state, root)
                 return {"status": "refused", "message": str(exc), "receipt": {"id": state["id"], "state": "refused"}}
             # Even a refused repeat can be a duplicate of a delivered deploy. Keep its identity.
             return {"status": "started", "message": f"Check the saved deploy before retrying submission. {exc}",
                     "receipt": {"id": state["id"], "state": "unknown"}}
         state["phase"] = "pending"
         state.pop("signed", None)
-        save(state)
+        save(state, root)
         return {"status": "started", "message": "Deployment submitted. Waiting for finalization.",
                 "receipt": {"id": state["id"], "state": "pending"}}

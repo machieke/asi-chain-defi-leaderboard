@@ -1,6 +1,6 @@
 // Round-scoped token ledgers and escrow. Only the deploying Hive relay may write.
 // The returned registry bundle is send-only; reads need no deployer capability.
-new api, rounds, openRound, initial, change, settle, market, price, savePlayer,
+new api, rounds, openRound, initial, change, settle, market, price, savePlayer, recordFill, matchBid,
     clock(`rho:block:data`), owner(`rho:system:deployerId`),
     insert(`rho:registry:insertArbitrary`), installed, result(`rho:system:deployId`) in {
   // Keep each hour on its own private channels so trades never rewrite old books.
@@ -19,9 +19,10 @@ new api, rounds, openRound, initial, change, settle, market, price, savePlayer,
     }
   } |
   contract initial(@hour, ret) = {
-    ret!({"players": {}, "next": 1, "auctions": {"0": {
-      "seller": "", "quantity": 1000n, "start": hour * 3600, "end": (hour + 1) * 3600,
-      "high": 4000n, "low": 1000n}}})
+    ret!({"players": {}, "next": 1, "fills": {}, "fillCount": 0, "volume": 0n,
+      "demand": {"minute": -1, "used": 0n, "budget": 204000n, "retired": 0n},
+      "auctions": {"0": {"seller": "", "initial": 160n, "quantity": 160n, "sold": 0n,
+      "start": hour * 3600, "end": (hour + 1) * 3600, "high": 1000n, "low": 600n}}})
   } |
   // Carry fractional reward numerators across actions. STBL has 3 decimals.
   // Per hour: 10% of staked STBL plus 2 STBL per staked LOT.
@@ -40,6 +41,58 @@ new api, rounds, openRound, initial, change, settle, market, price, savePlayer,
   contract savePlayer(@r, @id, @p, ret) = {
     ret!((r.set("players", r.get("players").set(id, p)), "ok"))
   } |
+  // Keep cumulative totals and a bounded public tape of the last 32 settled fills.
+  contract recordFill(@r, @key, @buyer, @qty, @unit, @now, ret) = {
+    match (r.get("auctions").get(key), r.get("fillCount") + 1) {
+      (a, n) => {
+        match {"n": n, "auction": key, "buyer": buyer, "seller": a.get("seller"),
+               "quantity": qty, "unit": unit, "time": now} {
+          trade => ret!(r.set("fillCount", n).set("volume", r.get("volume") + qty * unit)
+            .set("fills", r.get("fills").set(n % 32, trade))
+            .set("auctions", r.get("auctions").set(key, a.set("quantity", a.get("quantity") - qty)
+                                                         .set("sold", a.get("sold") + qty))))
+        }
+      }
+    }
+  } |
+  // A finite outside consumer pays the Dutch ask and retires the LOT. Unused minute capacity expires.
+  contract matchBid(@r, @key, @now, @listing, ret) = {
+    match (r.get("auctions").get(key), r.get("demand"), now / 60) {
+      (Nil, _, _) => ret!((r, "Unknown auction"))
+      (a, d, minute) => {
+        new capacity, bid in {
+          if (d.get("minute") == minute) { capacity!(2n - d.get("used")) } else { capacity!(2n) } |
+          if (minute % 2 == 0) { bid!(1200n) } else { bid!(1700n) } |
+          for (@left <- capacity; @limit <- bid) {
+            if ((a.get("seller") != "") and (a.get("quantity") > 0n) and (left > 0n)
+                and (now >= a.get("start")) and (now < a.get("end"))) {
+              new quote, size in {
+                price!(a, now, *quote) |
+                if (a.get("quantity") < left) { size!(a.get("quantity")) } else { size!(left) } |
+                for (@unit <- quote; @qty <- size) {
+                  if ((unit <= limit) and (qty * unit <= d.get("budget"))) {
+                    match r.get("players").get(a.get("seller")) {
+                      p => {
+                        new filled in {
+                          recordFill!(r, key, "", qty, unit, now, *filled) |
+                          for (@next <- filled) {
+                            savePlayer!(next.set("demand", d.set("minute", minute).set("used", 2n - left + qty)
+                              .set("budget", d.get("budget") - qty * unit).set("retired", d.get("retired") + qty)),
+                              a.get("seller"), p.set("cash", p.get("cash") + qty * unit)
+                                                .set("sales", p.get("sales") + 1), *ret)
+                          }
+                        }
+                      }
+                    }
+                  } else { if (listing) { ret!((r, "ok")) } else { ret!((r, "No executable consumer bid")) } }
+                }
+              }
+            } else { if (listing) { ret!((r, "ok")) } else { ret!((r, "No executable consumer bid")) } }
+          }
+        }
+      }
+    }
+  } |
   contract market(@op, @args, @id, @p, @r, @now, @end, ret) = {
     match (op, args) {
       ("sell", (qty, high, low, seconds)) => {
@@ -47,11 +100,12 @@ new api, rounds, openRound, initial, change, settle, market, price, savePlayer,
             and (seconds > 0) and (seconds <= end - now)) {
           match "${n}" %% {"n": r.get("next")} {
             key => {
-              match {"seller": id, "quantity": qty, "start": now, "end": now + seconds,
+              match {"seller": id, "initial": qty, "quantity": qty, "sold": 0n, "start": now, "end": now + seconds,
                      "high": high, "low": low} {
-                a => savePlayer!(r.set("next", r.get("next") + 1)
-                  .set("auctions", r.get("auctions").set(key, a)), id,
-                  p.set("lots", p.get("lots") - qty), *ret)
+                a => matchBid!(r.set("next", r.get("next") + 1)
+                  .set("auctions", r.get("auctions").set(key, a))
+                  .set("players", r.get("players").set(id, p.set("lots", p.get("lots") - qty))),
+                  key, now, true, *ret)
               }
             }
           }
@@ -70,17 +124,21 @@ new api, rounds, openRound, initial, change, settle, market, price, savePlayer,
                     cost => {
                       if ((cost <= limit) and (cost <= p.get("cash"))) {
                         match r.get("players").set(id, p.set("cash", p.get("cash") - cost)
-                                                        .set("lots", p.get("lots") + qty)) {
+                                                        .set("lots", p.get("lots") + qty)
+                                                        .set("buys", p.get("buys") + 1)) {
                           buyers => {
                             new paid in {
                               match a.get("seller") {
                                 "" => paid!(buyers)
                                 seller => paid!(buyers.set(seller, buyers.get(seller)
-                                  .set("cash", buyers.get(seller).get("cash") + cost)))
+                                  .set("cash", buyers.get(seller).get("cash") + cost)
+                                  .set("sales", buyers.get(seller).get("sales") + 1)))
                               } |
                               for (@players <- paid) {
-                                ret!((r.set("players", players).set("auctions", r.get("auctions")
-                                  .set(key, a.set("quantity", a.get("quantity") - qty))), "ok"))
+                                new filled in {
+                                  recordFill!(r.set("players", players), key, id, qty, unit, now, *filled) |
+                                  for (@next <- filled) { ret!((next, "ok")) }
+                                }
                               }
                             }
                           }
@@ -94,6 +152,7 @@ new api, rounds, openRound, initial, change, settle, market, price, savePlayer,
           }
         }
       }
+      ("fill-demand", key) => { matchBid!(r, key, now, false, *ret) }
       ("cancel", key) => {
         match r.get("auctions").get(key) {
           Nil => ret!((r, "Unknown auction"))
@@ -112,7 +171,7 @@ new api, rounds, openRound, initial, change, settle, market, price, savePlayer,
     match (op, r.get("players").get(id)) {
       ("register", Nil) => savePlayer!(r, id, {"name": args, "cash": 100000n,
         "staked": 0n, "lots": 0n, "lockedLots": 0n, "pending": 0n,
-        "remainder": 0n, "updated": now}, *ret)
+        "remainder": 0n, "buys": 0, "sales": 0, "updated": now}, *ret)
       ("register", _) => ret!((r, "Already registered"))
       (_, Nil) => ret!((r, "Register in this round first"))
       (_, account) => {

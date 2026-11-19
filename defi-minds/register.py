@@ -18,7 +18,7 @@ from hive.supervisor.workspace import current_token
 
 ROOT = Path(__file__).resolve().parent
 PROGRAM = "defi-benchmark"
-ACTIONS = ("standings", "receipt", "register", "stake", "unstake", "claim", "buy", "sell", "cancel")
+ACTIONS = ("standings", "quote", "receipt", "register", "stake", "unstake", "claim", "buy", "sell", "cancel", "fill-demand")
 
 
 class LocalOnly(HTTPRedirectHandler):
@@ -27,12 +27,14 @@ class LocalOnly(HTTPRedirectHandler):
 
 
 class Hive:
-    def __init__(self, port, data_dir):
+    def __init__(self, port, data_dir, *, operator_login=True):
         self.base = f"http://127.0.0.1:{port}/api/"
         self.http = build_opener(ProxyHandler({}), LocalOnly())
         self.data = data_dir
-        password = (data_dir / "admin-password").read_text().strip()
-        self.operator = self.request("auth/login", body={"password": password})["token"]
+        self.operator = None
+        if operator_login:
+            password = (data_dir / "admin-password").read_text().strip()
+            self.operator = self.request("auth/login", body={"password": password})["token"]
 
     def request(self, path, *, token=None, body=None, method=None):
         headers = {"Content-Type": "application/json"}
@@ -125,8 +127,13 @@ def provision(hive):
             mind = hive.admin("agents", {"kind": "omega", "name": name, "swarm_id": swarm_id, "persona": persona})
         agent_id = mind["id"]
         scope = "agent:" + agent_id
-        for action in ACTIONS:
-            skill = f"program:{PROGRAM}:{action}"
+        # Native Omega checks the skill before Hive checks the named app action.
+        skills = ["app-act", "app-resume", *(f"program:{PROGRAM}:{action}" for action in ACTIONS)]
+        if marker.split(" / ")[1] in ("monopolist", "oligarchy_member", "high_frequency_trader"):
+            skills.append(f"program:{PROGRAM}:opening-order")
+        if marker == "DeFi benchmark roster / high_frequency_trader / 1":
+            skills.append(f"program:{PROGRAM}:maker-order")
+        for skill in skills:
             if (scope, skill) not in rules:
                 hive.admin("policy", {"scope": scope, "skill": skill, "mode": "allow",
                                       "note": "DeFi benchmark roster participant"})

@@ -43,9 +43,14 @@
       <button id="auctions" type="button" aria-pressed="false">Dutch auctions</button>
     </div>
     <div class="panel-head"><h2 id="table-title">Mind standings</h2><span id="unit">Ranked in STBL</span></div>
+    <p id="market-summary" hidden></p>
     <div class="scroll"><table aria-labelledby="table-title"><thead id="columns"></thead><tbody id="rows"></tbody></table></div>
     <p id="notice" role="status" aria-live="polite">Connecting to OmegaHive…</p>
     <div class="pagination" id="pagination" hidden><button id="back" type="button">Previous page</button><span id="page"></span><button id="next" type="button">Next page</button></div>
+    <section id="fills" hidden aria-labelledby="fills-title">
+      <div class="panel-head"><h2 id="fills-title">Recent fills</h2><span id="fill-count"></span></div>
+      <div class="scroll"><table aria-labelledby="fills-title"><thead><tr><th>Time (UTC)</th><th>Auction</th><th>Buyer</th><th>Seller</th><th>LOT</th><th>STBL / LOT</th></tr></thead><tbody id="fill-rows"></tbody></table></div>
+    </section>
     <footer id="rules">Score includes liquid STBL, staked STBL and earned stable rewards. LOT contributes when sold or when its stake earns STBL.</footer>
   </section>
 </main>

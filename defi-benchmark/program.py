@@ -24,6 +24,14 @@ HOUR = 3600
 PAGE_SIZE = 20
 STAKE_FIELDS = {"asset": "STBL or LOT", "amount": "Positive token amount"}
 ACTIONS = {
+    "quote": ("Read my account, the best asks and executable consumer bid", {}),
+    "maker-order": ("Set my bounded market-making instruction for this round", {
+        "limit": "Maximum executor transactions this hour (0 cancels, at most 48)",
+        "clip": "Whole LOT per order (1–4)", "inventory": "Maximum working LOT (1–16)",
+        "buy_limit": "Maximum STBL per LOT to acquire", "sell_floor": "Minimum STBL per LOT to sell"}),
+    "opening-order": ("Register and buy primary LOT during the first five minutes of a round", {
+        "quantity": "Maximum opening LOT (0 cancels, up to 100)", "buy_limit": "Maximum STBL per LOT",
+        "reserve": "STBL to keep liquid", "offer": "Optional follow-up auction: quantity, start_price, floor_price, seconds"}),
     "standings": ("Read standings and auction quotes", {"round": "Optional UTC hour number",
                   "page": "Page starting at 1"}),
     "receipt": ("Check a submitted deploy", {"deploy": "Deploy signature"}),
@@ -36,6 +44,7 @@ ACTIONS = {
     "buy": ("Buy from a Dutch auction", {"auction": "Auction number", "quantity": "Whole LOT",
             "max_payment": "Maximum total payment in STBL"}),
     "cancel": ("Reclaim unsold LOT", {"auction": "Auction number"}),
+    "fill-demand": ("Match an open player auction to the current consumer bid", {"auction": "Auction number"}),
 }
 
 
@@ -43,7 +52,7 @@ def describe():
     actions = [{"id": key, "label": label, "params": params, "agents": False, "applies_to": [], "confirm": True}
                for key, (label, params) in SETUP_ACTIONS.items()]
     for key, (label, fields) in ACTIONS.items():
-        reading = key in ("standings", "receipt")
+        reading = key in ("standings", "quote", "receipt")
         params = fields if reading else {"round": "UTC hour number from standings", **fields}
         actions.append({"id": key, "label": label, "applies_to": [], "params": params,
                         "agents": True, **({"effect": "read"} if reading else {})})
@@ -55,10 +64,17 @@ def describe():
             "relations": []}
 
 
-def contract_uri():
-    value = installation.configured_uri(installation.reconcile())
+def contract_uri(hour=None):
+    state = installation.reconcile()
+    value = installation.configured_uri(state)
     if not value:
         raise ValueError("Open DeFi Benchmark in Hive to finish contract setup.")
+    if hour is not None:
+        for market in state.get("upgrades", []):
+            if hour >= market["from_round"]:
+                value = market["uri"]
+        if not installation.URI.fullmatch(value):
+            raise ValueError("Invalid round contract URI in the saved upgrade history.")
     return value
 
 
@@ -89,12 +105,12 @@ def units(n):
 
 
 def fetch_round(requested=None):
-    uri = contract_uri()
     observer = ObserverClient.from_env()
     block = observer.finalized_block()
     ts = int(block["timestamp"]) // 1000
     current = ts // HOUR
     hour = current if requested is None else integer(requested, "Round", 0, current)
+    uri = contract_uri(hour)
     term = f'''new out, lookup(`rho:registry:lookup`), ch in {{
       lookup!(`{uri}`, *ch) | for (api <- ch) {{ api!("snapshot", {hour}, *out) }}
     }}'''
@@ -104,7 +120,7 @@ def fetch_round(requested=None):
     return hour, current, ts, block, decode(result["expr"][0])
 
 
-def standings(requested=None, page=1):
+def standings(requested=None, page=1, *, trader=None):
     hour, current, ts, block, book = fetch_round(requested)
     end = (hour + 1) * HOUR
     now = min(ts, end)
@@ -116,7 +132,8 @@ def standings(requested=None, page=1):
         score = p["cash"] + p["staked"] + pending
         players.append((score, mind, {"id": mind, "name": p["name"], "cash": units(p["cash"]),
                         "staked": units(p["staked"]), "rewards": units(pending), "score": units(score),
-                        "gain": units(score - 100000), "lots": p["lots"], "staked_lots": p["lockedLots"]}))
+                        "gain": units(score - 100000), "lots": p["lots"], "staked_lots": p["lockedLots"],
+                        "buys": p.get("buys"), "sales": p.get("sales")}))
     players.sort(key=lambda item: (-item[0], item[1]))
     last, rank = None, 0
     for position, (score, _, row) in enumerate(players, 1):
@@ -128,13 +145,43 @@ def standings(requested=None, page=1):
         elapsed = max(0, min(now, a["end"]) - a["start"])
         price = a["high"] - (a["high"] - a["low"]) * elapsed // (a["end"] - a["start"])
         auctions.append({"id": key, "seller": book["players"][a["seller"]]["name"] if a["seller"] else "Round treasury",
+                         "seller_id": a["seller"], "initial": a.get("initial"), "sold": a.get("sold"),
                          "remaining": a["quantity"], "price": units(price), "start_price": units(a["high"]),
                          "floor": units(a["low"]), "end": a["end"],
                          "open": bool(a["quantity"] and now < a["end"])})
     pages = max(1, (max(len(players), len(auctions)) + PAGE_SIZE - 1) // PAGE_SIZE)
     page = min(integer(page, "Page"), pages)
     part = slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
-    return {"round": hour, "current": current, "end": end, "as_of": ts, "block": block["blockNumber"],
+    market = {}
+    if "demand" in book:
+        minute = now // 60
+        demand = book["demand"]
+        def name(mind, treasury):
+            return book["players"][mind]["name"] if mind else treasury
+        tape = [{"n": f["n"], "auction": f["auction"], "time": f["time"], "quantity": f["quantity"],
+                 "price": units(f["unit"]), "buyer": name(f["buyer"], "Treasury consumer"),
+                 "seller": name(f["seller"], "Round treasury")} for f in book["fills"].values()]
+        market = {"supply": book["auctions"]["0"]["initial"], "primary_remaining": book["auctions"]["0"]["quantity"],
+                  "fill_count": book["fillCount"], "turnover": units(book["volume"]),
+                  "recent_fills": sorted(tape, key=lambda f: -f["n"]),
+                  "demand": {"price": units(1700 if minute % 2 else 1200),
+                             "remaining": 0 if now >= end else 2 - (demand["used"] if demand["minute"] == minute else 0),
+                             "next_minute": min(end, (minute + 1) * 60), "budget": units(demand["budget"]),
+                             "retired": demand["retired"]}}
+    if trader is not None:
+        def offer(a):
+            return {k: a[k] for k in ("id", "price", "remaining", "end")}
+        peers = [a for a in auctions if a["open"] and a["seller_id"] and a["seller_id"] != trader]
+        peers.sort(key=lambda a: (amount(a["price"]), int(a["id"])))
+        mine = [a for a in auctions if a["seller_id"] == trader and a["remaining"]]
+        return {"round": hour, "block": block["blockNumber"], "as_of": ts, "end": end,
+                "me": next((p for _, mid, p in players if mid == trader), None),
+                "primary": offer(auctions[0]), "demand": market.get("demand"),
+                "peer_asks": [offer(a) for a in peers[:4]],
+                "my_listings": [offer(a) for a in mine if a["open"]][:4],
+                "escrow_lots": sum(a["remaining"] for a in mine),
+                "expired": next((a["id"] for a in mine if not a["open"]), None)}
+    return {"round": hour, "current": current, "end": end, "as_of": ts, "block": block["blockNumber"], **market,
             "hash": block["blockHash"], "count": len(players), "auction_count": len(auctions),
             "page": page, "pages": pages, "players": [p for _, _, p in players[part]], "auctions": auctions[part]}
 
@@ -197,7 +244,7 @@ def action_args(op, p, actor):
         seconds = integer(p.get("seconds"), "Duration", maximum=HOUR)
         return f"({qty}n, {high}n, {low}n, {seconds})"
     key = integer(p.get("auction"), "Auction", 0)
-    if op == "cancel":
+    if op in ("cancel", "fill-demand"):
         return f'"{key}"'
     qty = integer(p.get("quantity"), "Quantity")
     return f'("{key}", {qty}n, {amount(p.get("max_payment"))}n)'
@@ -210,8 +257,8 @@ def submit(ctx, op, params):
         raise ValueError("Use the authenticated OmegaHive mind action to enter or trade.")
     if not command.get("idempotency_key") or getattr(ctx, "read_only", False):
         raise ValueError("This action requires a recorded mind command.")
-    uri = contract_uri()
     hour = integer(params.get("round"), "Round", 0, 999999999)
+    uri = contract_uri(hour)
     key = hashlib.sha256(command["idempotency_key"].encode()).hexdigest()
     args = action_args(op, params, actor)
     term = f'''new out(`rho:system:deployId`), auth(`rho:system:deployerId`), lookup(`rho:registry:lookup`), ch in {{
@@ -251,12 +298,51 @@ def perform(ctx, action, params):
     if action not in ACTIONS:
         raise ValueError("Unknown benchmark action.")
     allowed = set(ACTIONS[action][1]) | {"base_revision"}
-    if action not in ("receipt", "standings"):
+    if action not in ("receipt", "standings", "quote"):
         allowed.add("round")
     if params.keys() - allowed:
         raise ValueError("Unexpected benchmark parameters.")
     if action == "standings":
         return {"status": "done", "detail": standings(params.get("round"), params.get("page", 1))}
+    if action in ("quote", "maker-order", "opening-order"):
+        actor = getattr(ctx, "actor", None) or {}
+        if actor.get("kind") != "mind" or not actor.get("id"):
+            raise ValueError("Use your authenticated Hive mind.")
+        quote = standings(trader=actor["id"])
+        if action == "quote":
+            return {"status": "done", "detail": quote}
+        hour = integer(params.get("round"), "Round", 0, 999999999)
+        if hour not in (quote["round"], quote["round"] + 1):
+            raise ValueError("Choose the current or immediately following UTC round.")
+        if hour == quote["round"] and not quote["demand"]:
+            raise ValueError("Standing orders execute only in the consumer market.")
+        if action == "opening-order":
+            qty = integer(params.get("quantity"), "Opening quantity", 0, 100)
+            opening = {"round": hour, "quantity": qty}
+            if qty:
+                opening.update(buy_limit=units(amount(params.get("buy_limit"))),
+                               reserve=units(amount(params.get("reserve"))))
+                if "offer" in params:
+                    offer = params["offer"]
+                    if not isinstance(offer, dict) or set(offer) != {"quantity", "start_price", "floor_price", "seconds"}:
+                        raise ValueError("Specify quantity, start_price, floor_price and seconds for the follow-up offer.")
+                    action_args("sell", offer, actor)
+                    opening["offer"] = {**offer, "quantity": integer(offer["quantity"], "Offered LOT", maximum=qty),
+                                        "seconds": integer(offer["seconds"], "Duration", maximum=HOUR)}
+                if hour == quote["round"] and quote["as_of"] >= hour * HOUR + 300:
+                    raise ValueError("The five-minute opening window has closed.")
+            return {"status": "done", "detail": opening}
+        mandate = {"round": hour, "limit": integer(params.get("limit"), "Transaction limit", 0, 48)}
+        if mandate["limit"]:
+            clip = integer(params.get("clip"), "Clip", maximum=4)
+            ceiling, floor = amount(params.get("buy_limit")), amount(params.get("sell_floor"))
+            if floor <= ceiling:
+                raise ValueError("The sale floor must exceed the purchase ceiling.")
+            mandate.update(clip=clip, inventory=integer(params.get("inventory"), "Inventory", clip, 16),
+                           buy_limit=units(ceiling), sell_floor=units(floor))
+        # Hive journals this authenticated instruction and its principal. The local executor reads
+        # that journal and routes every individual transaction through the same mind's app policy.
+        return {"status": "done", "detail": mandate}
     if action == "receipt":
         receipt = Deployer().receipt(str(params.get("deploy", "")))
         state = receipt["state"]
