@@ -1,0 +1,189 @@
+// Round-scoped token ledgers and escrow. Only the deploying Hive relay may write.
+// The returned registry bundle is send-only; reads need no deployer capability.
+new api, rounds, openRound, initial, change, settle, market, price, savePlayer,
+    clock(`rho:block:data`), owner(`rho:system:deployerId`),
+    insert(`rho:registry:insertArbitrary`), installed, result(`rho:system:deployId`) in {
+  // Keep each hour on its own private channels so trades never rewrite old books.
+  rounds!({}) |
+  contract openRound(@hour, ret) = {
+    for (@directory <- rounds) {
+      match directory.get(hour) {
+        Nil => {
+          new state, receipts in {
+            initial!(hour, *state) | receipts!({}) |
+            rounds!(directory.set(hour, (*state, *receipts))) | ret!((*state, *receipts))
+          }
+        }
+        ref => { rounds!(directory) | ret!(ref) }
+      }
+    }
+  } |
+  contract initial(@hour, ret) = {
+    ret!({"players": {}, "next": 1, "auctions": {"0": {
+      "seller": "", "quantity": 1000n, "start": hour * 3600, "end": (hour + 1) * 3600,
+      "high": 4000n, "low": 1000n}}})
+  } |
+  // Carry fractional reward numerators across actions. STBL has 3 decimals.
+  // Per hour: 10% of staked STBL plus 2 STBL per staked LOT.
+  contract settle(@p, @now, ret) = {
+    match p.get("remainder") + (now - p.get("updated")).toBigInt() *
+        (p.get("staked") + p.get("lockedLots") * 20000n) {
+      earned => ret!(p.set("pending", p.get("pending") + earned / 36000n)
+                       .set("remainder", earned % 36000n).set("updated", now))
+    }
+  } |
+  // Same descending linear quote and exclusive expiry as DutchAuction.rho.
+  contract price(@a, @now, ret) = {
+    ret!(a.get("high") - ((a.get("high") - a.get("low")) *
+      (now - a.get("start")).toBigInt() / (a.get("end") - a.get("start")).toBigInt()))
+  } |
+  contract savePlayer(@r, @id, @p, ret) = {
+    ret!((r.set("players", r.get("players").set(id, p)), "ok"))
+  } |
+  contract market(@op, @args, @id, @p, @r, @now, @end, ret) = {
+    match (op, args) {
+      ("sell", (qty, high, low, seconds)) => {
+        if ((qty > 0n) and (qty <= p.get("lots")) and (low > 0n) and (high >= low)
+            and (seconds > 0) and (seconds <= end - now)) {
+          match "${n}" %% {"n": r.get("next")} {
+            key => {
+              match {"seller": id, "quantity": qty, "start": now, "end": now + seconds,
+                     "high": high, "low": low} {
+                a => savePlayer!(r.set("next", r.get("next") + 1)
+                  .set("auctions", r.get("auctions").set(key, a)), id,
+                  p.set("lots", p.get("lots") - qty), *ret)
+              }
+            }
+          }
+        } else { ret!((r, "Invalid listing quantity, prices or duration")) }
+      }
+      ("buy", (key, qty, limit)) => {
+        match r.get("auctions").get(key) {
+          Nil => ret!((r, "Unknown auction"))
+          a => {
+            if ((qty > 0n) and (qty <= a.get("quantity")) and (now >= a.get("start"))
+                and (now < a.get("end")) and (id != a.get("seller"))) {
+              new quote in {
+                price!(a, now, *quote) |
+                for (@unit <- quote) {
+                  match unit * qty {
+                    cost => {
+                      if ((cost <= limit) and (cost <= p.get("cash"))) {
+                        match r.get("players").set(id, p.set("cash", p.get("cash") - cost)
+                                                        .set("lots", p.get("lots") + qty)) {
+                          buyers => {
+                            new paid in {
+                              match a.get("seller") {
+                                "" => paid!(buyers)
+                                seller => paid!(buyers.set(seller, buyers.get(seller)
+                                  .set("cash", buyers.get(seller).get("cash") + cost)))
+                              } |
+                              for (@players <- paid) {
+                                ret!((r.set("players", players).set("auctions", r.get("auctions")
+                                  .set(key, a.set("quantity", a.get("quantity") - qty))), "ok"))
+                              }
+                            }
+                          }
+                        }
+                      } else { ret!((r, "Price exceeds balance or maximum payment")) }
+                    }
+                  }
+                }
+              }
+            } else { ret!((r, "Auction closed, insufficient inventory or self purchase")) }
+          }
+        }
+      }
+      ("cancel", key) => {
+        match r.get("auctions").get(key) {
+          Nil => ret!((r, "Unknown auction"))
+          a => {
+            if ((id == a.get("seller")) and (a.get("quantity") > 0n)) {
+              savePlayer!(r.set("auctions", r.get("auctions").set(key, a.set("quantity", 0n))),
+                id, p.set("lots", p.get("lots") + a.get("quantity")), *ret)
+            } else { ret!((r, "No inventory owned by this seller")) }
+          }
+        }
+      }
+      _ => ret!((r, "Unknown market operation"))
+    }
+  } |
+  contract change(@op, @args, @id, @r, @now, @end, ret) = {
+    match (op, r.get("players").get(id)) {
+      ("register", Nil) => savePlayer!(r, id, {"name": args, "cash": 100000n,
+        "staked": 0n, "lots": 0n, "lockedLots": 0n, "pending": 0n,
+        "remainder": 0n, "updated": now}, *ret)
+      ("register", _) => ret!((r, "Already registered"))
+      (_, Nil) => ret!((r, "Register in this round first"))
+      (_, account) => {
+        new settled in {
+          settle!(account, now, *settled) |
+          for (@p <- settled) {
+            match (op, args) {
+              ("claim", _) => savePlayer!(r, id, p.set("cash", p.get("cash") + p.get("pending"))
+                .set("pending", 0n), *ret)
+              (method, (asset, qty)) => {
+                if (((method == "stake") or (method == "unstake")) and
+                    ((asset == "STBL") or (asset == "LOT")) and (qty > 0n)) {
+                  new fields in {
+                    match (asset, method) {
+                      ("STBL", "stake") => fields!(("cash", "staked"))
+                      ("STBL", "unstake") => fields!(("staked", "cash"))
+                      ("LOT", "stake") => fields!(("lots", "lockedLots"))
+                      ("LOT", "unstake") => fields!(("lockedLots", "lots"))
+                    } |
+                    for (@(src, dst) <- fields) {
+                      if (qty <= p.get(src)) {
+                        savePlayer!(r, id, p.set(src, p.get(src) - qty).set(dst, p.get(dst) + qty), *ret)
+                      } else { ret!((r, "Insufficient balance")) }
+                    }
+                  }
+                } else { ret!((r, "Invalid stake")) }
+              }
+              _ => market!(op, args, id, p, r, now, end, *ret)
+            }
+          }
+        }
+      }
+    }
+  } |
+  contract api(@"snapshot", @hour, ret) = {
+    for (@directory <<- rounds) {
+      match directory.get(hour) {
+        Nil => initial!(hour, *ret)
+        (state, _) => { for (@r <<- @state) { ret!(r) } }
+      }
+    }
+  } |
+  contract api(@"execute", auth, @hour, @id, @key, @op, @args, ret) = {
+    if (*auth == *owner) {
+      new time in {
+        clock!(*time) |
+        for (@_, @ms, @_ <- time) {
+          if (ms / 3600000 == hour) {
+            new ref in {
+              openRound!(hour, *ref) |
+              for (@(state, receipts) <- ref) {
+                for (@r <- @state; @seen <- @receipts) {
+                  match seen.get((id, key)) {
+                    Nil => {
+                      new done in {
+                        change!(op, args, id, r, ms / 1000, (hour + 1) * 3600, *done) |
+                        for (@(next, message) <- done) {
+                          @state!(next) | @receipts!(seen.set((id, key), message)) | ret!(message)
+                        }
+                      }
+                    }
+                    prior => { @state!(r) | @receipts!(seen) | ret!(prior) }
+                  }
+                }
+              }
+            }
+          } else { ret!("Round closed or not yet open") }
+        }
+      }
+    } else { ret!("Hive signer required") }
+  } |
+  insert!(bundle+{*api}, *installed) |
+  for (@uri <- installed) { result!(uri) }
+}
