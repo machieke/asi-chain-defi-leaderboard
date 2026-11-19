@@ -30,7 +30,7 @@ class InstallationTests(unittest.TestCase):
         self.account = self.enterContext(patch.object(setup, "account", return_value={
             "address": "test-address", "balance": "6000000"}))
         self.wallet = self.enterContext(patch.object(setup, "wallet")).return_value
-        self.wallet.public_keys.return_value = [PUBLIC]
+        self.wallet.entries.return_value = [(PUBLIC, "TestWallet")]
         self.admin = SimpleNamespace(actor={"kind": "person", "local_operator": True, "route": "operator"},
                                      viewer={"kind": "operator", "local_operator": True, "route": "operator"})
 
@@ -45,10 +45,10 @@ class InstallationTests(unittest.TestCase):
             for action in program.SETUP_ACTIONS:
                 self.assertEqual(self.act(action, ctx=SimpleNamespace(actor=actor))["status"], "refused")
         self.assertFalse(setup.directory().exists())
-        self.wallet.public_keys.return_value = []
+        self.wallet.entries.return_value = []
         self.assertEqual(self.act("create-signer")["status"], "done")
         self.wallet.generate.assert_called_once()
-        self.wallet.public_keys.return_value = [PUBLIC]
+        self.wallet.entries.return_value = [(PUBLIC, "TestWallet")]
         self.act("create-signer")
         self.wallet.generate.assert_called_once()
         for params in ({**PARAMS, "signer": "unlisted"}, {**PARAMS, "max_fee": "1"}, {**PARAMS, "term": "Nil"}):
@@ -90,11 +90,27 @@ class InstallationTests(unittest.TestCase):
     def test_configured_uri_and_nonoperator_views_do_not_touch_the_wallet(self):
         graph = program.view(SimpleNamespace(viewer={"kind": "person", "role": "member"}), None, None)
         self.assertFalse(graph["items"][0]["setup"]["operator"])
-        self.wallet.public_keys.assert_not_called()
+        self.wallet.entries.assert_not_called()
         with patch.dict(os.environ, {"DEFI_BENCHMARK_URI": URI}):
             self.assertEqual(program.contract_uri(), URI)
             self.assertEqual(self.act("deploy-benchmark", PARAMS)["status"], "done")
         self.assertFalse(self.writer.prepare.called)
+
+    def test_named_and_unnamed_signers_use_asi_wallet_hex_addresses(self):
+        from coincurve import PrivateKey
+        public = PrivateKey.from_int(1).public_key.format(False).hex()
+        address = "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf"
+        self.wallet.entries.return_value = [(PUBLIC, ""), (public, "TestWallet")]
+        self.writer.writer_status.return_value = {"minPhloPrice": "1"}
+        panel = setup.panel(self.admin, {}, public)
+        self.assertEqual(panel["selected"], public)
+        self.assertEqual(panel["keys"], [PUBLIC, public])
+        self.assertEqual(panel["signers"][public], {"name": "TestWallet", "address": address})
+        self.assertEqual(panel["signers"][PUBLIC]["name"], "")
+        with patch.dict(os.environ, {"CHAIN_DEPLOY_PUBLIC_KEY": public.upper()}):
+            self.assertEqual(setup.panel(self.admin, {})["signers"], {public: panel["signers"][public]})
+        with patch.dict(os.environ, {"CHAIN_DEPLOY_KEY_FILE": "/configured/signer"}):
+            self.assertEqual(setup.panel(self.admin, {})["signers"], {})
 
     def test_source_hash_and_uncertain_receipts_block_replacement(self):
         with patch.object(setup, "CONTRACT_SHA256", "0" * 64):

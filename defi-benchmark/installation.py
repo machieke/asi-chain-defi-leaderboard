@@ -85,16 +85,30 @@ def wallet():
     return Wallet.from_env()
 
 
-def choices():
+def signer_entries():
     file = os.getenv("CHAIN_DEPLOY_KEY_FILE")
     public = os.getenv("CHAIN_DEPLOY_PUBLIC_KEY")
     if file and public:
         raise ValueError("The Hive host has two default signers configured. Select one in its environment.")
     if file:
-        return ["host"]
+        return {"host": ""}
+    host_wallet = wallet()
+    # Wallets from before signer naming still have valid public keys.
+    entries = dict(host_wallet.entries()) if hasattr(host_wallet, "entries") else dict.fromkeys(host_wallet.public_keys(), "")
     if public:
-        return [public.lower()]
-    return wallet().public_keys()
+        key = public.lower()
+        return {key: entries.get(key, "")}
+    return entries
+
+
+def wallet_address(public):
+    from Crypto.Hash import keccak
+
+    if not PUBLIC.fullmatch(public):
+        raise ValueError("Invalid wallet public key.")
+    # ASI Chain Wallet's deriveEthAddress hashes the uncompressed X and Y coordinates.
+    digest = keccak.new(digest_bits=256, data=bytes.fromhex(public[2:])).digest()
+    return "0x" + digest[-20:].hex()
 
 
 def account(public):
@@ -156,9 +170,10 @@ def panel(ctx, state, requested=None):
             "id": state.get("id"), "message": state.get("message", "")}
     if not info["operator"] or phase in ("pending", "prepared"):
         return info
-    keys = choices()
-    selected = requested if requested in keys else next(iter(keys), "")
-    info.update(keys=keys, selected=selected)
+    entries = signer_entries()
+    selected = requested if requested in entries else next(iter(entries), "")
+    info.update(keys=list(entries), selected=selected, signers={
+        key: {"name": name, "address": wallet_address(key)} for key, name in entries.items() if key != "host"})
     if selected:
         if selected != "host":
             info.update(account(selected))
@@ -171,7 +186,7 @@ def create_signer():
         state = read()
         if configured_uri(state) or state.get("phase") in ("prepared", "pending"):
             raise ValueError("This Hive already has a benchmark installation.")
-        if not choices():
+        if not signer_entries():
             host_wallet = wallet()
             host_wallet.initialize()
             host_wallet.generate()
@@ -196,7 +211,7 @@ def install(params, *, replay=False):
             if replay:
                 raise ValueError("There is no signed deployment to resume.")
             selected = params.get("signer")
-            if selected not in choices():
+            if selected not in signer_entries():
                 raise ValueError("Select a signer from the host wallet.")
             source = CONTRACT.read_bytes()
             if hashlib.sha256(source).hexdigest() != CONTRACT_SHA256:

@@ -88,8 +88,15 @@ function renderSetup(info) {
   const keys = info.keys || [];
   signerChoice = info.selected || '';
   el('signer').replaceChildren(...keys.map(key => {
-    const option = cell('option', key === 'host' ? 'Host-configured signer' : key);
+    const signer = info.signers?.[key];
+    let caption = key === 'host' ? 'Host-configured signer' : key;
+    if (signer) {
+      const address = signer.address;
+      caption = [signer.name, address.slice(0, 6) + '..' + address.slice(-4)].filter(Boolean).join(' ');
+    }
+    const option = cell('option', caption);
     option.value = key;
+    if (signer) option.title = signer.address;
     return option;
   }));
   el('signer').value = signerChoice;

@@ -1,0 +1,2 @@
+# Keccak-256 for the ASI wallet's public 0x address.
+pycryptodome>=3.20,<4

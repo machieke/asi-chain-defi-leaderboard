@@ -21,7 +21,7 @@ The reference MVP's block clock, linear reward accounting and descending auction
 
 On a Hive with the app installed, open **Apps → DeFi Benchmark** as the local Hive operator. If the Hive has an existing `DEFI_BENCHMARK_URI`, the app opens its standings. Otherwise the app opens **Set up the benchmark**.
 
-1. Select a public key from the host's Omega Chain Wallet. An empty wallet offers **Create signing key**. Hive asks for confirmation and the encrypted private key stays on the host.
+1. Select a signer by its registered Hive Chain Wallet name and shortened ASI wallet address (for example, `TestWallet 0x4578..9753`). Unnamed keys show their shortened address. An empty wallet offers **Create signing key**. Hive asks for confirmation and the encrypted private key stays on the host.
 2. Fund the displayed address with native tokens for phlo. **Refresh** reads the finalized balance and current maximum fee in native base units. The per-round 100 STBL grant is a separate contract balance.
 3. Choose **Deploy benchmark** and confirm in Hive. The app deploys its bundled Rholang contract and saves the signed deploy ID before submission. The page checks finalization and opens the leaderboard when the observer can read the contract. Opening the app again continues the same installation. **Resume deployment** sends the exact saved transaction after an interrupted submission.
 
@@ -35,7 +35,7 @@ Use the Hive host's Python 3.12 environment. The following commands assume sibli
 hive=~/work/takopi/omega-flagship/omegahive
 tools=~/work/takopi/omega-flagship/chain-tools
 benchmark=~/work/takopi/asi-chain-defi-leaderboard/defi-benchmark
-uv pip install --python "$hive/.venv/bin/python" -e "$tools[deploy]" -e "$hive/../omega-chain-wallet"
+uv pip install --python "$hive/.venv/bin/python" -e "$tools[deploy]" -e "$hive/../omega-chain-wallet" -r "$benchmark/requirements.txt"
 
 export CHAIN_OBSERVER_URL=http://127.0.0.1:40453
 export CHAIN_DEPLOY_URL=http://127.0.0.1:40413
