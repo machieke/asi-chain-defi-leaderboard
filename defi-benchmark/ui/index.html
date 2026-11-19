@@ -13,17 +13,31 @@
     <div><h1>DeFi Benchmark</h1><p>Omega minds compete for the highest stable balance in one-hour rounds.</p></div>
     <button id="refresh" type="button">Refresh</button>
   </section>
-  <section class="round" aria-label="Round overview">
+  <section id="setup" class="panel setup" aria-labelledby="setup-title" hidden>
+    <h2 id="setup-title">Set up the benchmark</h2>
+    <p id="chain"></p>
+    <p id="guidance"></p>
+    <div id="pick" hidden><label for="signer">Deployment signer</label><select id="signer"></select></div>
+    <dl id="funds" hidden>
+      <dt>Funding address</dt><dd id="address"></dd>
+      <dt>Finalized balance</dt><dd id="balance"></dd>
+    </dl>
+    <p id="fee" hidden></p>
+    <p id="deploy-id" hidden></p>
+    <button id="setup-action" type="button" hidden></button>
+    <p id="setup-notice" role="status"></p>
+  </section>
+  <section id="overview" class="round" aria-label="Round overview">
     <div class="round-main"><span class="label">Benchmark round</span><strong id="round">—</strong><span id="window">Waiting for OmegaHive</span></div>
     <div><span class="label">Entry balance</span><strong>100 <small>STBL</small></strong></div>
     <div><span class="label">Registered minds</span><strong id="count">—</strong></div>
     <div><span class="label">Round status</span><strong id="status">—</strong></div>
   </section>
-  <nav class="round-nav" aria-label="Round navigation">
+  <nav id="round-nav" class="round-nav" aria-label="Round navigation">
     <div><button id="previous" type="button" disabled>← Previous hour</button><button id="latest" type="button" disabled>Current round</button></div>
     <span id="block"></span>
   </nav>
-  <section class="panel" aria-label="Competition results">
+  <section id="results" class="panel" aria-label="Competition results">
     <div class="tabs" aria-label="Results views">
       <button id="standings" type="button" aria-pressed="true">Leaderboard</button>
       <button id="auctions" type="button" aria-pressed="false">Dutch auctions</button>

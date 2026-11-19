@@ -2,6 +2,7 @@ const el = id => document.getElementById(id);
 const {appChannel: channel, appHostOrigin: origin} = document.documentElement.dataset;
 let board, mode = 'standings', selected = 'current', page = 1, sequence = 0;
 let waiting = null, timeout;
+let setup, signerChoice = '', actionPending = null;
 const stamp = seconds => new Date(seconds * 1000).toISOString().slice(11, 16);
 const label = (id, value) => { el(id).textContent = value; };
 const cell = (tag, value, style = '') => {
@@ -75,14 +76,66 @@ function reset() {
   el('latest').disabled = selected === 'current';
   render();
 }
+function setupVisible(visible) {
+  el('setup').hidden = !visible;
+  for (const id of ['overview', 'round-nav', 'results']) el(id).hidden = visible;
+}
+function renderSetup(info) {
+  setup = info;
+  setupVisible(true);
+  label('chain', info.network + ' / ' + info.shard);
+  label('setup-title', ['prepared', 'pending'].includes(info.phase) ? 'Installing the benchmark' : 'Set up the benchmark');
+  const keys = info.keys || [];
+  signerChoice = info.selected || '';
+  el('signer').replaceChildren(...keys.map(key => {
+    const option = cell('option', key === 'host' ? 'Host-configured signer' : key);
+    option.value = key;
+    return option;
+  }));
+  el('signer').value = signerChoice;
+  el('signer').disabled = !!actionPending;
+  el('pick').hidden = !keys.length;
+  el('funds').hidden = !info.address;
+  label('address', info.address || '');
+  label('balance', (info.balance || '0') + ' native base units');
+  el('fee').hidden = !info.max_fee;
+  label('fee', 'Maximum deployment fee: ' + (info.max_fee || '0') + ' native base units.');
+  el('deploy-id').hidden = !info.id;
+  label('deploy-id', 'Deploy ID: ' + (info.id || ''));
+  let action = '', title = '', guidance = '';
+  if (info.phase === 'unavailable') guidance = info.message;
+  else if (info.phase === 'pending') guidance = 'Submitted. This page checks for finalization and opens the leaderboard when it is ready.';
+  else if (info.phase === 'prepared') {
+    guidance = 'The signed transaction is saved. It can be sent again with the same deploy ID.';
+    action = 'resume-deployment'; title = 'Resume deployment';
+  } else if (!info.operator) guidance = 'The local Hive operator can deploy the benchmark from this screen.';
+  else if (!keys.length) {
+    guidance = 'Create a signing key in the Hive wallet, then fund its address for chain fees.';
+    action = 'create-signer'; title = 'Create signing key';
+  } else {
+    guidance = info.message || 'Deploy the bundled Rholang contract to start the hourly staking and auction rounds.';
+    if (info.address && BigInt(info.balance) < BigInt(info.max_fee)) {
+      guidance = 'Fund the address below with native tokens for deployment, then refresh its balance.';
+    }
+    action = 'deploy-benchmark'; title = 'Deploy benchmark';
+  }
+  label('guidance', guidance);
+  const button = el('setup-action');
+  button.hidden = !info.operator || !action;
+  button.dataset.action = action;
+  button.textContent = title;
+  button.disabled = !!actionPending || (action === 'deploy-benchmark' && !!info.address && BigInt(info.balance) < BigInt(info.max_fee));
+}
 function load() {
+  if (actionPending) return;
   if (!channel || !origin) { notify('Open DeFi Benchmark inside OmegaHive to see finalized standings.'); return; }
   clearTimeout(timeout);
   waiting = 'board-' + (++sequence);
-  send({type:'app-request', id:waiting, op:'view', body:{focus:'round:' + selected + ':' + page, stage:'unfold'}});
+  const focus = setup && signerChoice ? 'setup:' + signerChoice : 'round:' + selected + ':' + page;
+  send({type:'app-request', id:waiting, op:'view', body:{focus, stage:'unfold'}});
   timeout = setTimeout(() => {
-    waiting = null;
-    notify('The Hive has not returned a fresh snapshot. Refresh to try again.');
+    const text = 'The Hive has not returned a fresh snapshot. Refresh to try again.';
+    if (setup) label('setup-notice', text); else notify(text);
   }, 16000);
 }
 function navigate(round, targetPage) {
@@ -93,15 +146,46 @@ window.addEventListener('message', event => {
   const msg = event.data;
   if (!channel || event.source !== parent || event.origin !== origin || msg?.channel !== channel) return;
   if (msg.type === 'app-context') { load(); return; }
+  if (msg.type === 'app-reply' && actionPending && msg.id === actionPending) {
+    actionPending = null;
+    label('setup-notice', msg.result?.message || msg.error || '');
+    load();
+    return;
+  }
   if (msg.type !== 'app-reply' || !waiting || msg.id !== waiting) return;
   clearTimeout(timeout); waiting = null;
+  const config = msg.result?.items?.find(i => i.kind === 'setup');
+  if (msg.ok && config?.setup) { renderSetup(config.setup); return; }
+  setup = null; signerChoice = '';
+  setupVisible(false);
   const round = msg.result?.items?.find(i => i.kind === 'round');
   if (!msg.ok || !round?.board) {
     reset(); notify(round?.summary || msg.error || 'Finalized standings are unavailable.'); return;
   }
   board = round.board; page = board.page; render();
 });
-el('refresh').onclick = load;
+el('refresh').onclick = () => {
+  actionPending = null;
+  label('setup-notice', '');
+  load();
+};
+el('signer').onchange = () => {
+  signerChoice = el('signer').value;
+  el('setup-action').disabled = true;
+  label('setup-notice', '');
+  load();
+};
+el('setup-action').onclick = () => {
+  const action = el('setup-action').dataset.action;
+  if (actionPending || !setup?.operator || !action) return;
+  clearTimeout(timeout); waiting = null;
+  actionPending = 'setup-' + (++sequence);
+  el('setup-action').disabled = true;
+  el('signer').disabled = true;
+  label('setup-notice', 'Waiting for confirmation from OmegaHive…');
+  const params = action === 'deploy-benchmark' ? {signer: setup.selected, max_fee: setup.max_fee} : {};
+  send({type:'app-request', id:actionPending, op:'act', body:{action, items:[], params}});
+};
 el('previous').onclick = () => board && navigate(board.round - 1, 1);
 el('latest').onclick = () => navigate('current', 1);
 el('back').onclick = () => navigate(selected, Math.max(1, page - 1));

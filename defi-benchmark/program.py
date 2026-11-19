@@ -1,11 +1,24 @@
 """OmegaHive program contract 0.1. Finalized chain state is the scoring ledger."""
 import asyncio
 import hashlib
-import os
+import importlib.util
+from pathlib import Path
 import re
 
 from chain_observer import ChainError, ObserverClient
 from omega_chain_deploy import Deployer, decode
+
+# Hive loads the pinned program by path, outside the Python module search path.
+_spec = importlib.util.spec_from_file_location("defi_installation", Path(__file__).with_name("installation.py"))
+installation = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(installation)
+
+SETUP_ACTIONS = {
+    "create-signer": ("Create a benchmark signing key in the host wallet", {}),
+    "deploy-benchmark": ("Deploy the hourly benchmark contract and pay its chain fee",
+                         {"signer": "Host wallet public key or host default", "max_fee": "Maximum native base units"}),
+    "resume-deployment": ("Resubmit the same saved benchmark deploy", {}),
+}
 
 HOUR = 3600
 PAGE_SIZE = 20
@@ -27,7 +40,8 @@ ACTIONS = {
 
 
 def describe():
-    actions = []
+    actions = [{"id": key, "label": label, "params": params, "agents": False, "applies_to": [], "confirm": True}
+               for key, (label, params) in SETUP_ACTIONS.items()]
     for key, (label, fields) in ACTIONS.items():
         reading = key in ("standings", "receipt")
         params = fields if reading else {"round": "UTC hour number from standings", **fields}
@@ -35,15 +49,16 @@ def describe():
                         "agents": True, **({"effect": "read"} if reading else {})})
     return {"contract": "0.1", "actions": actions,
             "kinds": [{"id": "round", "label": "Benchmark round", "role": "other"},
+                      {"id": "setup", "label": "Contract installation", "role": "other"},
                       {"id": "mind", "label": "Mind standing", "role": "assessment"},
                       {"id": "auction", "label": "Dutch auction", "role": "other"}],
             "relations": []}
 
 
 def contract_uri():
-    value = os.getenv("DEFI_BENCHMARK_URI", "")
-    if not re.fullmatch(r"rho:id:[a-z0-9]{54}", value):
-        raise ValueError("Configure DEFI_BENCHMARK_URI with the installed contract URI.")
+    value = installation.configured_uri(installation.reconcile())
+    if not value:
+        raise ValueError("Open DeFi Benchmark in Hive to finish contract setup.")
     return value
 
 
@@ -128,6 +143,22 @@ def view(ctx, focus, stage):
     match = re.fullmatch(r"round:(current|[0-9]+):([0-9]+)", focus or "")
     requested = match[1] if match and match[1] != "current" else None
     try:
+        state = installation.read()
+        if not installation.configured_uri(state):
+            try:
+                state = installation.reconcile()
+                if not installation.configured_uri(state):
+                    info = installation.panel(ctx, state, (focus or "").removeprefix("setup:"))
+                else:
+                    info = None
+            except (ChainError, ValueError, OSError) as exc:
+                info = {**installation.identity(), "phase": "unavailable", "id": state.get("id"),
+                        "message": str(exc)}
+            if info is not None:
+                return {"revision": hashlib.sha256(str(info).encode()).hexdigest(), "title": "DeFi Benchmark",
+                        "focus": "setup", "items": [{"id": "setup", "kind": "setup", "label": "Benchmark setup",
+                                                      "summary": info.get("message") or "Contract installation", "setup": info}],
+                        "links": [], "notes": []}
         board = standings(requested, match[2] if match else 1)
     except (ChainError, ValueError, OSError) as exc:
         return {"revision": "unavailable", "title": "DeFi Benchmark", "focus": "round",
@@ -189,7 +220,13 @@ def submit(ctx, op, params):
       }}
     }}'''
     writer = Deployer()
-    signed = writer.prepare(term)
+    installation_state = installation.read()
+    if installation_state.get("wallet"):
+        signed = writer.prepare(term, wallet_public_key=installation_state["signer"])
+    else:
+        signed = writer.prepare(term)
+    if installation_state.get("signer") and installation_state["signer"] != signed["deployer"]:
+        raise ValueError("The current signer differs from the benchmark's installing signer.")
     deploy_id = signed["signature"]
     try:
         writer.submit(signed)
@@ -203,6 +240,14 @@ def submit(ctx, op, params):
 
 
 def perform(ctx, action, params):
+    if action in SETUP_ACTIONS:
+        if not installation.operator(getattr(ctx, "actor", None)) or getattr(ctx, "read_only", False):
+            raise ValueError("Only the local Hive operator can configure the benchmark.")
+        if set(params) - (set(SETUP_ACTIONS[action][1]) | {"base_revision"}):
+            raise ValueError("Unexpected setup parameters.")
+        if action == "create-signer":
+            return installation.create_signer()
+        return installation.install(params, replay=action == "resume-deployment")
     if action not in ACTIONS:
         raise ValueError("Unknown benchmark action.")
     allowed = set(ACTIONS[action][1]) | {"base_revision"}

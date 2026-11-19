@@ -362,3 +362,16 @@ footer {
     padding: .65rem .05rem .55rem;
   }
 }
+
+.setup { padding: clamp(18px, 3vw, 32px); max-width: 840px; }
+.setup h2 { margin-bottom: .35rem; }
+.setup p { color: var(--muted); line-height: 1.5; margin-bottom: .8rem; }
+#chain { font: .8rem var(--mono); margin-bottom: 1.1rem; }
+.setup label, .setup dt { font-weight: 600; font-size: .88rem; }
+.setup select { display: block; width: 100%; border: 1px solid var(--line); border-radius: 6px;
+  padding: .55rem; font: .85rem var(--mono); background: white; color: var(--ink); margin-top: .3rem; }
+.setup dl { padding: 1rem; background: var(--paper); border-radius: 6px; }
+.setup dd, #deploy-id { font: .84rem/1.5 var(--mono); overflow-wrap: anywhere; margin: .25rem 0 .7rem; }
+.setup dd:last-child { margin-bottom: 0; }
+#setup-action { color: white; background: var(--teal); }
+#setup-notice { margin: .6rem 0 0; }
