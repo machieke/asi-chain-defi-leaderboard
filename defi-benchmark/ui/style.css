@@ -380,3 +380,88 @@ footer {
 .setup dd:last-child { margin-bottom: 0; }
 #setup-action { color: white; background: var(--teal); }
 #setup-notice { margin: .6rem 0 0; }
+
+/* The market uses the dark sky of the Classic Hive scene. */
+#orbit { --night:#101b2b; --dim:#a4b8cd; color:#eff4fa; background:#101b29; }
+.orbit-stage { position:relative; isolation:isolate; height:clamp(410px,53vh,560px); overflow:hidden;
+  background:radial-gradient(ellipse at 33% 48%,#1d2844 0%,#111d30 38%,#0a1624 76%); }
+.orbit-header { position:absolute; z-index:2; top:22px; left:24px; right:24px; display:flex; align-items:flex-start;
+  justify-content:space-between; gap:10px; pointer-events:none; }
+#orbit-title { margin-top:5px; font-size:clamp(1.55rem,3vw,2.15rem); line-height:1.07; font-weight:590; letter-spacing:-.052em; }
+.orbit-status, #orbit-clock, .orbit-legend { font:500 .69rem/1.45 var(--mono); color:var(--dim); }
+.orbit-status { display:flex; gap:8px; align-items:center; }
+.orbit-status::before { content:""; width:6px; height:6px; background:#bcb0ee; border-radius:50%; }
+.orbit-status[data-live=true]::before { background:#86e2b9; box-shadow:0 0 8px #7bd8b0; }
+.orbit-controls { display:flex; gap:.4rem; pointer-events:auto; }
+#orbit button { color:#dbe7f0; background:#172635; border:1px solid #344757; font-size:.74rem; }
+#orbit button:hover:enabled { background:#223747; border-color:#7799ae; }
+#orbit button:focus-visible { outline:2px solid #b4deef; outline-offset:-2px; }
+#orbit-space { position:absolute; inset:58px clamp(235px,27%,308px) 35px 3px; }
+#orbit-sky { display:block; width:100%; height:100%; }
+.orbit-ranks { position:absolute; top:78px; right:22px; width:clamp(213px,25%,280px); max-height:calc(100% - 125px);
+  display:flex; flex-direction:column; border:1px solid #354558; border-radius:10px; overflow:hidden;
+  background:linear-gradient(145deg,#172638f2,#111e2cef); box-shadow:0 12px 32px #050c1642; }
+#orbit #orbit-rank-toggle { display:flex; justify-content:space-between; align-items:center; padding:12px;
+  font-size:.9rem; background:transparent; border:0; text-align:left; }
+#orbit-rank-toggle span { color:var(--dim); }
+#orbit-rank-toggle[aria-expanded=false] span { transform:rotate(180deg); }
+#orbit-rank-scroll { overflow:auto; scrollbar-width:thin; }
+.orbit-ranks table { width:100%; color:#e6eff9; font: .74rem var(--mono); }
+.orbit-ranks :is(th,td) { padding:6px 6px; border-bottom:1px solid #2b3949; }
+.orbit-ranks :is(th,td):first-child { padding-left:12px; }
+.orbit-ranks :is(th,td):last-child { padding-right:12px; }
+.orbit-ranks tbody tr:last-child td { border:0; }
+.orbit-ranks th { position:sticky; top:0; z-index:1; background:#1b2a3a; color:#acbfd2; font-size:.64rem; }
+.orbit-ranks td:first-child { color:#9caec0; }
+#orbit .orbit-ranks td button { border:0; text-align:left; font:.75rem/1.25 "Inter",system-ui,sans-serif;
+  background:transparent; border-radius:3px; padding:2px 0; white-space:normal; }
+.orbit-ranks td button::before { content:""; display:inline-block; vertical-align:middle; width:5px; height:5px;
+  margin:0 6px 2px 0; border-radius:50%; background:var(--mind); }
+.orbit-ranks tr:has(button[aria-pressed=true]) { background:#243448; }
+.orbit-legend { position:absolute; bottom:14px; left:24px; display:flex; flex-wrap:wrap; align-items:center;
+  gap:14px; font-size:.67rem; }
+.stake-key::before,.auction-key::before { content:""; display:inline-block; width:6px; height:6px; margin:0 7px 1px 0;
+  border:1px solid #71e5ce; transform:rotate(45deg); }
+.auction-key::before { border-color:#ffbf79; transform:none; }
+.orbit-account, .orbit-activity { padding:14px 24px; border-top:1px solid #2a394b; }
+.orbit-account { display:flex; align-items:center; flex-wrap:wrap; gap:12px 24px; background:#152332; }
+#orbit-mind-name { font-size:.9rem; }
+.orbit-account dl { display:flex; flex-wrap:wrap; gap:10px 22px; margin:0; }
+.orbit-account dt { font-size:.68rem; color:var(--dim); }
+.orbit-account dd { margin:3px 0 0; font: .77rem var(--mono); }
+.orbit-activity-head { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+.orbit-activity h3 { margin:0; font-size:.93rem; font-weight:600; }
+#orbit-events { padding:0; margin:8px 0 0; list-style:none; }
+#orbit-events li { display:grid; grid-template-columns:65px 98px 1fr auto; gap:8px; align-items:center; border-top:1px solid #29384a;
+  padding:7px 0; font-size:.77rem; }
+#orbit-events :is(time,strong) { font: .74rem var(--mono); }
+#orbit-events time,#orbit-quiet { color:var(--dim); }
+#orbit-events b { font-weight:500; color:#ffc489; }
+#orbit-events li[data-kind=stake] b { color:#8de4cd; }
+#orbit-events li[data-kind=grant] b { color:#c4b6f4; }
+#orbit-quiet { font-size:.8rem; margin:8px 0; }
+@media (max-width:760px) {
+  .orbit-stage { height:575px; }
+  .orbit-header { top:15px; left:14px; right:14px; }
+  .orbit-controls button { padding:.45rem .5rem; }
+  #orbit-space { inset:57px 2px 192px; }
+  .orbit-ranks { left:14px; right:14px; bottom:38px; top:auto; width:auto; max-height:154px; }
+  #orbit #orbit-rank-toggle { padding:8px 10px; }
+  .orbit-stage:has(#orbit-rank-toggle[aria-expanded=false]) #orbit-space { bottom:80px; }
+  .orbit-legend { bottom:11px; left:14px; gap:9px; font-size:.59rem; }
+  .orbit-account,.orbit-activity { padding:12px 14px; }
+  #orbit-events li { grid-template-columns:56px 1fr auto; }
+  #orbit-events li span { grid-column:2/-1; grid-row:2; }
+  #orbit-events li strong { grid-column:3; grid-row:1; }
+  .tabs { gap:.85rem; }
+}
+@media (max-width:400px) {
+  .tabs { gap:.65rem; }
+  .tabs button { font-size:.74rem; }
+  .orbit-controls { gap:.25rem; }
+  #orbit .orbit-controls button { font-size:.67rem; }
+}
+@media (max-width:450px) {
+  #orbit-title { font-size:1.32rem; white-space:nowrap; }
+  .orbit-controls button { white-space:nowrap; }
+}

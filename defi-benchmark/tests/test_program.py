@@ -45,6 +45,24 @@ class ProgramTests(unittest.TestCase):
         self.assertEqual([(p["id"], p["rank"], p["score"], p["gain"]) for p in rows],
                          [("a", 1, "107.200", "7.200"), ("b", 1, "107.200", "7.200")])
 
+    def test_orbit_includes_all_ranked_minds_and_settled_cash_endpoints(self):
+        player = {"name": "Shared display name", "cash": 100000, "staked": 0, "pending": 0,
+                  "remainder": 0, "lockedLots": 0, "lots": 0, "updated": 0}
+        ask = {"seller": "", "initial": 160, "quantity": 125, "sold": 35, "start": 0,
+               "end": 3600, "high": 1000, "low": 600}
+        book = {"players": {f"id-{n}": player for n in range(program.PAGE_SIZE + 1)},
+                "auctions": {"0": ask, "1": dict(ask, seller="id-1", quantity=3)},
+                "demand": {"minute": 0, "used": 0, "budget": 204000, "retired": 0},
+                "fills": {1: {"n": 1, "auction": "1", "time": 5, "quantity": 3, "unit": 1278,
+                              "buyer": "id-2", "seller": "id-1"}}, "fillCount": 1, "volume": 3834}
+        with patch.object(program, "fetch_round", return_value=(0, 0, 10, {"blockNumber": 2, "blockHash": "h"}, book)):
+            self.assertEqual(len(program.standings()["players"]), program.PAGE_SIZE)
+            board = program.standings(orbit=True)
+        self.assertEqual(len(board["players"]), program.PAGE_SIZE + 1)
+        self.assertEqual(next(p for p in board["players"] if p["id"] == "id-1")["escrow_lots"], 3)
+        fill = board["recent_fills"][0]
+        self.assertEqual((fill["buyer_id"], fill["seller_id"], fill["total"]), ("id-2", "id-1", "3.834"))
+
     def test_identity_and_parameters_checked_before_signing(self):
         ctx = SimpleNamespace(actor={"kind": "person", "id": "m1"}, command={"idempotency_key": "one"})
         with patch.object(program, "Deployer") as signer:

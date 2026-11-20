@@ -18,14 +18,19 @@ function notify(message) {
 }
 function send(message) { parent.postMessage({...message, channel}, origin); }
 function render() {
-  const ranked = mode === 'standings';
+  const animated = mode === 'animation', ranked = mode === 'standings';
+  el('orbit').hidden = !animated;
+  el('table-view').hidden = animated;
+  for (const id of ['standings', 'auctions', 'animation']) el(id).setAttribute('aria-pressed', String(mode === id));
+  if (animated) {
+    if (board) { renderOverview(); globalThis.marketOrbit.update(board); notify(''); }
+    return;
+  }
   label('table-title', ranked ? 'Mind standings' : 'Auction book');
   label('unit', ranked ? 'Ranked in STBL' : 'Prices in STBL / LOT');
   label('rules', ranked
     ? 'Score includes liquid STBL, staked STBL and earned stable rewards. LOT contributes when sold or when its stake earns STBL.'
     : 'Prices fall from the starting price toward the floor. Buyers pay the confirmed block price, subject to their maximum payment.');
-  el('standings').setAttribute('aria-pressed', String(ranked));
-  el('auctions').setAttribute('aria-pressed', String(!ranked));
   const market = Boolean(board?.demand);
   el('market-summary').hidden = ranked || !market;
   el('fills').hidden = ranked || !market;
@@ -67,6 +72,10 @@ function render() {
     }
     el('rows').append(row);
   }
+  renderOverview();
+  notify(rows.length ? '' : (board.page > 1 ? 'No entries on this page.' : ranked ? 'No minds have registered in this round.' : 'No auctions in this round.'));
+}
+function renderOverview() {
   const live = board.round === board.current;
   label('round', '#' + board.round);
   const start = new Date((board.end - 3600) * 1000);
@@ -81,10 +90,10 @@ function render() {
   el('pagination').hidden = board.pages === 1;
   el('back').disabled = board.page <= 1;
   el('next').disabled = board.page >= board.pages;
-  notify(rows.length ? '' : (board.page > 1 ? 'No entries on this page.' : ranked ? 'No minds have registered in this round.' : 'No auctions in this round.'));
 }
 function reset() {
   board = null;
+  globalThis.marketOrbit.reset();
   for (const id of ['round', 'count', 'status']) label(id, '—');
   label('window', 'No finalized snapshot');
   label('block', '');
@@ -95,6 +104,7 @@ function reset() {
 }
 function setupVisible(visible) {
   el('setup').hidden = !visible;
+  globalThis.marketOrbit.setActive(!visible && mode === 'animation');
   for (const id of ['overview', 'round-nav', 'results']) el(id).hidden = visible;
 }
 function renderSetup(info) {
@@ -155,9 +165,11 @@ function load() {
   if (!channel || !origin) { notify('Open DeFi Benchmark inside OmegaHive to see finalized standings.'); return; }
   clearTimeout(timeout);
   waiting = 'board-' + (++sequence);
-  const focus = setup && signerChoice ? 'setup:' + signerChoice : 'round:' + selected + ':' + page;
+  const focus = setup && signerChoice ? 'setup:' + signerChoice :
+    mode === 'animation' ? 'orbit:' + selected : 'round:' + selected + ':' + page;
   send({type:'app-request', id:waiting, op:'view', body:{focus, stage:'unfold'}});
   timeout = setTimeout(() => {
+    waiting = null;
     const text = 'The Hive has not returned a fresh snapshot. Refresh to try again.';
     if (setup) label('setup-notice', text); else notify(text);
   }, 16000);
@@ -184,7 +196,8 @@ window.addEventListener('message', event => {
   setupVisible(false);
   const round = msg.result?.items?.find(i => i.kind === 'round');
   if (!msg.ok || !round?.board) {
-    reset(); notify(round?.summary || msg.error || 'Finalized standings are unavailable.'); return;
+    if (mode !== 'animation' || !board) reset();
+    notify(round?.summary || msg.error || 'Finalized standings are unavailable.'); return;
   }
   board = round.board; page = board.page; render();
 });
@@ -214,9 +227,24 @@ el('previous').onclick = () => board && navigate(board.round - 1, 1);
 el('latest').onclick = () => navigate('current', 1);
 el('back').onclick = () => navigate(selected, Math.max(1, page - 1));
 el('next').onclick = () => navigate(selected, page + 1);
-for (const id of ['standings', 'auctions']) el(id).onclick = () => { mode = id; render(); };
+for (const id of ['standings', 'auctions', 'animation']) el(id).onclick = () => {
+  if (mode === id) return;
+  const changeFeed = mode === 'animation' || id === 'animation';
+  mode = id;
+  if (changeFeed) {
+    navigate(selected, 1);
+    globalThis.marketOrbit.setActive(id === 'animation');
+  } else render();
+};
 render();
 if (channel && origin) {
   send({type:'app-ready'});
-  setInterval(() => { if (!document.hidden && !waiting) load(); }, 30000);
+  // A single in-flight bridge read per view. Follow live transfers more closely than the tables.
+  let lastPoll = Date.now();
+  setInterval(() => {
+    const interval = mode === 'animation' && selected === 'current' && !setup ? 6000 : 30000;
+    if (!document.hidden && !waiting && Date.now() - lastPoll >= interval) {
+      lastPoll = Date.now(); load();
+    }
+  }, 1000);
 } else load();

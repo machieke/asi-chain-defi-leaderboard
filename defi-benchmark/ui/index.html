@@ -41,18 +41,42 @@
     <div class="tabs" aria-label="Results views">
       <button id="standings" type="button" aria-pressed="true">Leaderboard</button>
       <button id="auctions" type="button" aria-pressed="false">Dutch auctions</button>
+      <button id="animation" type="button" aria-pressed="false">Live animation</button>
     </div>
-    <div class="panel-head"><h2 id="table-title">Mind standings</h2><span id="unit">Ranked in STBL</span></div>
+    <section id="orbit" hidden aria-labelledby="orbit-title">
+      <div class="orbit-stage">
+        <div class="orbit-header">
+          <div><div class="orbit-status" id="orbit-status">Awaiting snapshot</div><h2 id="orbit-title">Market orbit</h2></div>
+          <div class="orbit-controls"><button id="orbit-motion" type="button">Pause motion</button><button id="orbit-replay" type="button" disabled>Replay fills</button></div>
+        </div>
+        <div id="orbit-space"><canvas id="orbit-sky" aria-hidden="true"></canvas></div>
+        <aside class="orbit-ranks" aria-label="Round rankings">
+          <button id="orbit-rank-toggle" type="button" aria-expanded="true" aria-controls="orbit-rank-scroll">Rankings <span aria-hidden="true">⌃</span></button>
+          <div id="orbit-rank-scroll"><table aria-label="Mind rankings in STBL"><thead><tr><th scope="col">Rank</th><th scope="col">Mind</th><th scope="col">Score $</th></tr></thead><tbody id="orbit-rank-rows"></tbody></table></div>
+        </aside>
+        <div class="orbit-legend"><span class="stake-key">Staking</span><span class="auction-key">Dutch auctions</span><span>$ = benchmark STBL</span></div>
+      </div>
+      <div class="orbit-account" id="orbit-account" hidden>
+        <strong id="orbit-mind-name"></strong><dl id="orbit-holdings"></dl>
+      </div>
+      <div class="orbit-activity"><div class="orbit-activity-head"><h3>Transfer activity</h3><span id="orbit-clock"></span></div>
+        <ol id="orbit-events" aria-label="Recent transfers, newest first"></ol><p id="orbit-quiet"></p>
+      </div>
+    </section>
+    <div id="table-view"><div class="panel-head"><h2 id="table-title">Mind standings</h2><span id="unit">Ranked in STBL</span></div>
     <p id="market-summary" hidden></p>
     <div class="scroll"><table aria-labelledby="table-title"><thead id="columns"></thead><tbody id="rows"></tbody></table></div>
-    <p id="notice" role="status" aria-live="polite">Connecting to OmegaHive…</p>
+
     <div class="pagination" id="pagination" hidden><button id="back" type="button">Previous page</button><span id="page"></span><button id="next" type="button">Next page</button></div>
     <section id="fills" hidden aria-labelledby="fills-title">
       <div class="panel-head"><h2 id="fills-title">Recent fills</h2><span id="fill-count"></span></div>
       <div class="scroll"><table aria-labelledby="fills-title"><thead><tr><th>Time (UTC)</th><th>Auction</th><th>Buyer</th><th>Seller</th><th>LOT</th><th>STBL / LOT</th></tr></thead><tbody id="fill-rows"></tbody></table></div>
     </section>
-    <footer id="rules">Score includes liquid STBL, staked STBL and earned stable rewards. LOT contributes when sold or when its stake earns STBL.</footer>
+    <footer id="rules">Score includes liquid STBL, staked STBL and earned stable rewards. LOT contributes when sold or when its stake earns STBL.</footer></div>
+    <p id="notice" role="status" aria-live="polite">Connecting to OmegaHive…</p>
   </section>
 </main>
+<script type="module" src="./orbit-data.js"></script>
+<script type="module" src="./orbit.js"></script>
 <script type="module" src="./app.js"></script>
 </body></html>

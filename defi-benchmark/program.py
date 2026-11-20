@@ -120,7 +120,7 @@ def fetch_round(requested=None):
     return hour, current, ts, block, decode(result["expr"][0])
 
 
-def standings(requested=None, page=1, *, trader=None):
+def standings(requested=None, page=1, *, trader=None, orbit=False):
     hour, current, ts, block, book = fetch_round(requested)
     end = (hour + 1) * HOUR
     now = min(ts, end)
@@ -160,6 +160,8 @@ def standings(requested=None, page=1, *, trader=None):
             return book["players"][mind]["name"] if mind else treasury
         tape = [{"n": f["n"], "auction": f["auction"], "time": f["time"], "quantity": f["quantity"],
                  "price": units(f["unit"]), "buyer": name(f["buyer"], "Treasury consumer"),
+                 **({"buyer_id": f["buyer"], "seller_id": f["seller"],
+                     "total": units(f["unit"] * f["quantity"])} if orbit else {}),
                  "seller": name(f["seller"], "Round treasury")} for f in book["fills"].values()]
         market = {"supply": book["auctions"]["0"]["initial"], "primary_remaining": book["auctions"]["0"]["quantity"],
                   "fill_count": book["fillCount"], "turnover": units(book["volume"]),
@@ -168,6 +170,14 @@ def standings(requested=None, page=1, *, trader=None):
                              "remaining": 0 if now >= end else 2 - (demand["used"] if demand["minute"] == minute else 0),
                              "next_minute": min(end, (minute + 1) * 60), "budget": units(demand["budget"]),
                              "retired": demand["retired"]}}
+    if orbit:
+        escrow = {}
+        for auction in auctions:
+            seller = auction["seller_id"]
+            escrow[seller] = escrow.get(seller, 0) + auction["remaining"]
+        return {"round": hour, "current": current, "end": end, "as_of": ts, "block": block["blockNumber"],
+                "hash": block["blockHash"], "count": len(players), "page": 1, "pages": 1,
+                "players": [dict(row, escrow_lots=escrow.get(mid, 0)) for _, mid, row in players], **market}
     if trader is not None:
         def offer(a):
             return {k: a[k] for k in ("id", "price", "remaining", "end")}
@@ -188,6 +198,7 @@ def standings(requested=None, page=1, *, trader=None):
 
 def view(ctx, focus, stage):
     match = re.fullmatch(r"round:(current|[0-9]+):([0-9]+)", focus or "")
+    orbit = re.fullmatch(r"orbit:(current|[0-9]+)", focus or "")
     requested = match[1] if match and match[1] != "current" else None
     try:
         state = installation.read()
@@ -206,13 +217,19 @@ def view(ctx, focus, stage):
                         "focus": "setup", "items": [{"id": "setup", "kind": "setup", "label": "Benchmark setup",
                                                       "summary": info.get("message") or "Contract installation", "setup": info}],
                         "links": [], "notes": []}
-        board = standings(requested, match[2] if match else 1)
+        if orbit:
+            board = standings(None if orbit[1] == "current" else orbit[1], orbit=True)
+        else:
+            board = standings(requested, match[2] if match else 1)
     except (ChainError, ValueError, OSError) as exc:
         return {"revision": "unavailable", "title": "DeFi Benchmark", "focus": "round",
                 "items": [{"id": "round", "kind": "round", "label": "Standings unavailable", "summary": str(exc)}],
                 "links": [], "notes": [str(exc)]}
     rows = [{"id": "round", "kind": "round", "label": f"Round {board['round']}",
              "summary": f"{board['count']} registered minds", "board": board}]
+    if orbit:
+        return {"revision": f"{board['hash']}/{board['round']}/orbit", "title": "DeFi Benchmark",
+                "focus": "round", "suggested_stage": stage, "items": rows, "links": [], "notes": []}
     rows.extend({"id": "mind:" + p["id"], "kind": "mind", "label": f"#{p['rank']}  {p['name']}",
                  "summary": f"{p['score']} STBL · change {p['gain']} STBL"} for p in board["players"])
     rows.extend({"id": "auction:" + a["id"], "kind": "auction", "label": f"Auction {a['id']} · {a['seller']}",
